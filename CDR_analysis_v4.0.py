@@ -1,10 +1,12 @@
-#!/Library/Frameworks/Python.framework/Versions/3.5/bin/python3.5
+#!/Users/josemerchan/anaconda3/bin/python
 
 import re, openpyxl, datetime, sys
 from openpyxl.utils import get_column_letter
 from openpyxl import load_workbook
 import matplotlib.pylab as plt
 import seaborn as sns
+import pandas as pd
+from collections import OrderedDict
 
 def concurrent_calls_xlsx(file_name,re_origin,re_destination,duration):
     """
@@ -220,8 +222,53 @@ if __name__ == "__main__":
             print("openpyxl does not support the old .xls file format, please use xlrd to read this file, "
                   "or convert it to the more recent .xlsx file format")
     # Verify if XLS
-    elif (sys.argv[1][-3:].lower()=="xlsx"):
-        print ("do something")
+    elif (sys.argv[1][-3:].lower()=="xls"):
+        # Columns from the Excel Sheet where the data relative to analysis is contained
+        column_names = ["Start Time", "System Name", "Remote Site", "Duration (sec)"]
+
+        df = pd.read_excel(sys.argv[1])
+        # Filter using duration
+        duration = df['Duration (sec)'] > 1000
+        # Filter using regex origin
+        regex_origin = df['System Name'].str.contains(r'MCU|MULTICONFERENCIA$',
+                                                      flags=re.IGNORECASE, regex=True, na=False)
+        # Filter using regex destination
+        regex_destination = df['Remote Site'].str.contains(r'.*$',
+                                                           flags=re.IGNORECASE, regex=True, na=False)
+        # Apply filters to get the calls that match our search criteria
+        filtered_df = (df[regex_origin & regex_destination & duration])
+        # Drop Columns that do not apply to our analysis
+        filtered_df.drop([x for x in filtered_df.columns if x not in column_names],
+                         axis=1, inplace=True)
+
+        # Move time from string to datetime
+        filtered_df.loc[:,"Start Time"] = pd.to_datetime(filtered_df["Start Time"], errors = 'raise')
+        # Move duration from string to timedelta
+        filtered_df.loc[:,'Duration (sec)'] = pd.to_timedelta(filtered_df["Duration (sec)"], unit= "s",errors = 'coerce')
+        # Sort DataSet by Call Start time
+        filtered_df.sort_values(by=['Start Time'])
+        # Determine the time when the call ends
+        filtered_df["Time End"] = filtered_df['Start Time'] + filtered_df['Duration (sec)']
+
+        # Every time we have a call starting we create a flag set to 1
+        start_time_counter = pd.Series(1, filtered_df['Start Time'], name= "Start Time Counter")
+        # Every time a call end we set a flag set to -1
+        end_time_counter = pd.Series(-1, filtered_df["Time End"], name= "End Time Counter")
+
+        # Create a DataFrame with concatenating two series
+        filtered_data = pd.concat([start_time_counter], axis=1)
+        filtered_data = filtered_data.join (end_time_counter, how= 'outer')
+
+        """
+        Cummulative sum of both columsn
+        """
+        positive_cum_sum = filtered_data['Start Time Counter'].cumsum()
+        negative_cum_sum = filtered_data['End Time Counter'].cumsum()
+
+        concurrent_calls = pd.concat ([positive_cum_sum,negative_cum_sum], axis = 1)
+
+        print (concurrent_calls)
+
     # Verify if CSV
     elif (sys.argv[1][-3:].lower()=="csv"):
         print ("do something")
