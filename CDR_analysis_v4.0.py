@@ -6,7 +6,7 @@ from openpyxl import load_workbook
 import matplotlib.pylab as plt
 import seaborn as sns
 import pandas as pd
-from collections import OrderedDict
+
 
 def concurrent_calls_xlsx(file_name,re_origin,re_destination,duration):
     """
@@ -213,6 +213,75 @@ def printer(origin_time,end_time,dict_concurrency,re_origin,re_destination):
     plt.plot(x, y, sns.xkcd_rgb["medium green"], lw=2)
     plt.show()
 
+def pandas_concurrent_calls (file_name,re_origin,re_destination,duration):
+    """
+
+    :param file_name: FileName where CDRs are contained
+    :param re_origin: regex used to match the caller
+    :param re_destination: regex used to match destination
+    :param duration: minimum call duration
+    :return:
+    """
+
+    # Columns from the Excel Sheet where the data relative to analysis is contained
+    column_names = ["Time", "Source Numbers", "Destination Number", "Duration (sec)"]
+
+    df = pd.read_excel(file_name)
+    # Filter using duration
+    duration = df['Duration (sec)'] > int(duration)
+    # Filter using regex origin
+    regex_origin = df['Source Number'].str.contains(re_origin,
+                                                    flags=re.IGNORECASE, regex=True, na=False)
+    # Filter using regex destination
+    regex_destination = df['Destination Number'].str.contains(re_destination,
+                                                              flags=re.IGNORECASE, regex=True, na=False)
+    # Apply filters to get the calls that match our search criteria
+    filtered_df = (df[regex_origin & regex_destination & duration])
+    # Drop Columns that do not apply to our analysis
+    filtered_df.drop([x for x in filtered_df.columns if x not in column_names],
+                     axis=1, inplace=True)
+
+    # Move time from string to datetime
+    filtered_df.loc[:, "Time"] = pd.to_datetime(filtered_df["Time"], errors='raise')
+    # Move duration from string to timedelta
+    filtered_df.loc[:, 'Duration (sec)'] = pd.to_timedelta(filtered_df["Duration (sec)"], unit="s", errors='coerce')
+    # Sort DataSet by Call Start time
+    filtered_df.sort_values(by=['Time'])
+    # Determine the time when the call ends
+    filtered_df["End Time"] = filtered_df['Time'] + filtered_df['Duration (sec)']
+
+    first_call_start_time = filtered_df['Time'].iloc[0]
+    last_call_end_time = filtered_df['End Time'].iloc[-1]
+
+    print(first_call_start_time, last_call_end_time)
+
+    # Every time we have a call starting we create a flag set to 1
+    start_time_counter = pd.Series(1, filtered_df['Time'], name="Start Time Counter")
+    # Every time a call end we set a flag set to -1
+    end_time_counter = pd.Series(-1, filtered_df["End Time"], name="End Time Counter")
+
+    # Create a DataFrame concatenating two series
+    filtered_data = pd.concat([start_time_counter], axis=1)
+    filtered_data = filtered_data.join(end_time_counter, how='outer')
+
+    # Cumulative sum of the values of two columns. NaN values set to 0
+    filtered_data['Concurrent Calls'] = (filtered_data['Start Time Counter'].fillna(0) + \
+                                         filtered_data['End Time Counter'].fillna(0)).cumsum()
+
+    """
+    #df = filtered_data['Concurrent Calls'].resample('180S').mean().ffill()
+    soften_line = filtered_data['Concurrent Calls'].resample('180S').mean().reset_index().set_index('index').interpolate(method='linear')
+    print (soften_line)
+    #.reset_index().interpolate(method='cubic')
+    #time_series = filtered_data['Concurrent Calls'].resample('180S')
+
+    #print (df)
+    #print (filtered_data['Concurrent Calls'])
+    """
+    filtered_data['Concurrent Calls'].plot()
+
+    plt.show()
+
 if __name__ == "__main__":
     # Verify if XLSX
     if (sys.argv[1][-4:].lower()=="xlsx"):
@@ -223,51 +292,7 @@ if __name__ == "__main__":
                   "or convert it to the more recent .xlsx file format")
     # Verify if XLS
     elif (sys.argv[1][-3:].lower()=="xls"):
-        # Columns from the Excel Sheet where the data relative to analysis is contained
-        column_names = ["Start Time", "System Name", "Remote Site", "Duration (sec)"]
-
-        df = pd.read_excel(sys.argv[1])
-        # Filter using duration
-        duration = df['Duration (sec)'] > 1000
-        # Filter using regex origin
-        regex_origin = df['System Name'].str.contains(r'MCU|MULTICONFERENCIA$',
-                                                      flags=re.IGNORECASE, regex=True, na=False)
-        # Filter using regex destination
-        regex_destination = df['Remote Site'].str.contains(r'.*$',
-                                                           flags=re.IGNORECASE, regex=True, na=False)
-        # Apply filters to get the calls that match our search criteria
-        filtered_df = (df[regex_origin & regex_destination & duration])
-        # Drop Columns that do not apply to our analysis
-        filtered_df.drop([x for x in filtered_df.columns if x not in column_names],
-                         axis=1, inplace=True)
-
-        # Move time from string to datetime
-        filtered_df.loc[:,"Start Time"] = pd.to_datetime(filtered_df["Start Time"], errors = 'raise')
-        # Move duration from string to timedelta
-        filtered_df.loc[:,'Duration (sec)'] = pd.to_timedelta(filtered_df["Duration (sec)"], unit= "s",errors = 'coerce')
-        # Sort DataSet by Call Start time
-        filtered_df.sort_values(by=['Start Time'])
-        # Determine the time when the call ends
-        filtered_df["Time End"] = filtered_df['Start Time'] + filtered_df['Duration (sec)']
-
-        # Every time we have a call starting we create a flag set to 1
-        start_time_counter = pd.Series(1, filtered_df['Start Time'], name= "Start Time Counter")
-        # Every time a call end we set a flag set to -1
-        end_time_counter = pd.Series(-1, filtered_df["Time End"], name= "End Time Counter")
-
-        # Create a DataFrame with concatenating two series
-        filtered_data = pd.concat([start_time_counter], axis=1)
-        filtered_data = filtered_data.join (end_time_counter, how= 'outer')
-
-        """
-        Cummulative sum of both columsn
-        """
-        positive_cum_sum = filtered_data['Start Time Counter'].cumsum()
-        negative_cum_sum = filtered_data['End Time Counter'].cumsum()
-
-        concurrent_calls = pd.concat ([positive_cum_sum,negative_cum_sum], axis = 1)
-
-        print (concurrent_calls)
+        pandas_concurrent_calls(sys.argv[1],r'.*',r'.*', "500")
 
     # Verify if CSV
     elif (sys.argv[1][-3:].lower()=="csv"):
