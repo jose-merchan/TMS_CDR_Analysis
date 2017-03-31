@@ -220,20 +220,25 @@ def pandas_concurrent_calls (file_name,re_origin,re_destination,duration):
     :param re_origin: regex used to match the caller
     :param re_destination: regex used to match destination
     :param duration: minimum call duration
-    :return:
+    :return: Excel File with Concurrent Calls and Graphic
     """
 
+    start_time = "Time"
+    caller = "Source Number"
+    callee = "Destination Number"
+    call_length = "Duration (sec)"
+
     # Columns from the Excel Sheet where the data relative to analysis is contained
-    column_names = ["Time", "Source Numbers", "Destination Number", "Duration (sec)"]
+    column_names = [start_time, caller, callee, call_length]
 
     df = pd.read_excel(file_name)
     # Filter using duration
-    duration = df['Duration (sec)'] > int(duration)
+    duration = df[call_length] > int(duration)
     # Filter using regex origin
-    regex_origin = df['Source Number'].str.contains(re_origin,
+    regex_origin = df[caller].str.contains(re_origin,
                                                     flags=re.IGNORECASE, regex=True, na=False)
     # Filter using regex destination
-    regex_destination = df['Destination Number'].str.contains(re_destination,
+    regex_destination = df[callee].str.contains(re_destination,
                                                               flags=re.IGNORECASE, regex=True, na=False)
     # Apply filters to get the calls that match our search criteria
     filtered_df = (df[regex_origin & regex_destination & duration])
@@ -242,21 +247,20 @@ def pandas_concurrent_calls (file_name,re_origin,re_destination,duration):
                      axis=1, inplace=True)
 
     # Move time from string to datetime
-    filtered_df.loc[:, "Time"] = pd.to_datetime(filtered_df["Time"], errors='raise')
+    filtered_df.loc[:, start_time] = pd.to_datetime(filtered_df[start_time], errors='raise')
     # Move duration from string to timedelta
-    filtered_df.loc[:, 'Duration (sec)'] = pd.to_timedelta(filtered_df["Duration (sec)"], unit="s", errors='coerce')
+    filtered_df.loc[:, call_length] = pd.to_timedelta(filtered_df[call_length], unit="s", errors='coerce')
     # Sort DataSet by Call Start time
-    filtered_df.sort_values(by=['Time'])
+    filtered_df.sort_values(by=[start_time])
     # Determine the time when the call ends
-    filtered_df["End Time"] = filtered_df['Time'] + filtered_df['Duration (sec)']
+    filtered_df["End Time"] = filtered_df[start_time] + filtered_df[call_length]
 
-    first_call_start_time = filtered_df['Time'].iloc[0]
+    first_call_start_time = filtered_df[start_time].iloc[0]
     last_call_end_time = filtered_df['End Time'].iloc[-1]
 
-    print(first_call_start_time, last_call_end_time)
 
     # Every time we have a call starting we create a flag set to 1
-    start_time_counter = pd.Series(1, filtered_df['Time'], name="Start Time Counter")
+    start_time_counter = pd.Series(1, filtered_df[start_time], name="Start Time Counter")
     # Every time a call end we set a flag set to -1
     end_time_counter = pd.Series(-1, filtered_df["End Time"], name="End Time Counter")
 
@@ -268,31 +272,35 @@ def pandas_concurrent_calls (file_name,re_origin,re_destination,duration):
     filtered_data['Concurrent Calls'] = (filtered_data['Start Time Counter'].fillna(0) + \
                                          filtered_data['End Time Counter'].fillna(0)).cumsum()
 
-    """
-    #df = filtered_data['Concurrent Calls'].resample('180S').mean().ffill()
-    soften_line = filtered_data['Concurrent Calls'].resample('180S').mean().reset_index().set_index('index').interpolate(method='linear')
-    print (soften_line)
-    #.reset_index().interpolate(method='cubic')
-    #time_series = filtered_data['Concurrent Calls'].resample('180S')
+    # Save Results to Excel file
+    if sys.argv[1][-3:].lower()=="xls":
+        with pd.ExcelWriter("{}".format(sys.argv[1][:-4]) + '_Concurrent_Calls.xlsx') as writer:
+            filtered_data.to_excel(writer, sheet_name="Concurrent Calls")
+    elif sys.argv[1][-4:].lower()=="xlsx":
+        with pd.ExcelWriter("{}".format(sys.argv[1][:-5]) + '_Concurrent_Calls.xlsx') as writer:
+            filtered_data.to_excel(writer, sheet_name="Concurrent Calls")
 
-    #print (df)
-    #print (filtered_data['Concurrent Calls'])
-    """
-    filtered_data['Concurrent Calls'].plot()
+    # Create new Index from time period comprised between the first and last sample with frequency 1 second
+    idx = pd.date_range(filtered_data.index[0], filtered_data.index[-1], freq='S')
+    new_series = filtered_data['Concurrent Calls']
+    # Remove Duplicate Index from the series and take the last, which will have the right value
+    new_series = new_series[~new_series.index.duplicated(keep='last')]
+    # Reindex series with new Index value
+    new_series.index = pd.DatetimeIndex(new_series.index)
+    new_series = new_series.reindex(idx, fill_value=0)
 
+    # Plot graphic
+    ax = new_series.plot(marker= '.', title="Concurrent Calls with origin {}".format(re_origin) + " and destination {}".format(re_destination))
+    ax.set_xlabel("Time")
+    ax.set_ylabel("No of Concurrent Calls")
     plt.show()
 
+
+
 if __name__ == "__main__":
-    # Verify if XLSX
-    if (sys.argv[1][-4:].lower()=="xlsx"):
-        try:
-            concurrent_calls_xlsx(sys.argv[1],r'.*',r'.*', "500")
-        except openpyxl.utils.exceptions.InvalidFileException:
-            print("openpyxl does not support the old .xls file format, please use xlrd to read this file, "
-                  "or convert it to the more recent .xlsx file format")
-    # Verify if XLS
-    elif (sys.argv[1][-3:].lower()=="xls"):
-        pandas_concurrent_calls(sys.argv[1],r'.*',r'.*', "500")
+    # Verify if XLSX or XLS
+    if (sys.argv[1][-4:].lower()=="xlsx" or sys.argv[1][-3:].lower()=="xls"):
+        pandas_concurrent_calls(sys.argv[1],r'.*',r'.*', "10000")
 
     # Verify if CSV
     elif (sys.argv[1][-3:].lower()=="csv"):
