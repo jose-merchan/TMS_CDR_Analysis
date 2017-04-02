@@ -287,12 +287,16 @@ def pandas_concurrent_calls (file_name,re_origin,re_destination,duration):
     new_series = new_series[~new_series.index.duplicated(keep='last')]
     # Reindex series with new Index value
     new_series.index = pd.DatetimeIndex(new_series.index)
-    new_series = new_series.reindex(idx, fill_value=0)
+    new_series = new_series.reindex(idx,method='pad')
+    #new_series.fillna(method='ffill')
 
     # Plot graphic
-    ax = new_series.plot(marker= '.', title="Concurrent Calls with origin {}".format(re_origin) + " and destination {}".format(re_destination))
+    ax = new_series.plot(title="Concurrent Calls with origin {}".format(re_origin) + " and destination {}".format(re_destination))
     ax.set_xlabel("Time")
     ax.set_ylabel("No of Concurrent Calls")
+
+    #filtered_data.plot(ax=ax)
+
     plt.show()
 
 
